@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TETRIS PvP : WEBSOCKET EDITION</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+        
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: #0f172a; 
+            color: white;
+            overflow: hidden; 
+            touch-action: none;
+        }
+
+        .canvas-container {
+            position: relative;
+            background: rgba(15, 23, 42, 0.85);
+            border-radius: 8px;
+            box-shadow: 0 0 25px rgba(0,0,0,0.7);
+            padding: 10px;
+        }
+
+        canvas {
+            display: block;
+            width: 300px;
+            height: 600px;
+            background-color: #020617; 
+            border: 2px solid #334155;
+            border-radius: 4px;
+        }
+
+        .augment-card {
+            transition: all 0.2s ease;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .augment-card:hover {
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+            border-color: #64748b;
+        }
+
+        .augment-card.selected {
+            border-color: #fbbf24;
+            box-shadow: 0 0 20px rgba(251, 191, 36, 0.4);
+            background-color: rgba(251, 191, 36, 0.1);
+        }
+
+        .glow-text-p1 { text-shadow: 0 0 12px rgba(56, 189, 248, 0.8); }
+        .glow-text-p2 { text-shadow: 0 0 12px rgba(244, 114, 182, 0.8); }
+
+        @keyframes fadeIn {
+            from { opacity: 0; backdrop-filter: blur(0px); }
+            to { opacity: 1; backdrop-filter: blur(12px); }
+        }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .spinner { animation: spin 1s linear infinite; }
+        
+        .tier-legendary { color: #f59e0b; }
+        .tier-epic { color: #a855f7; }
+        
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col items-center justify-center bg-[url('https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=2070&auto=format&fit=crop')] bg-cover bg-center bg-no-repeat bg-blend-overlay">
+    <div class="absolute inset-0 bg-slate-900/85 z-0 backdrop-blur-sm"></div>
+
+    <div class="relative z-10 w-full max-w-7xl flex flex-col items-center">
+        <!-- Header -->
+        <header class="text-center mb-6">
+            <h1 class="text-4xl md:text-5xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 mb-2 drop-shadow-[0_0_15px_rgba(99,102,241,0.5)]">
+                TETRIS PvP : WEBSOCKET 
+            </h1>
+            <p class="text-slate-300 text-sm font-medium">실시간 온라인 멀티플레이 (Cloudflare Backend)</p>
+        </header>
+
+        <!-- Main Game Area -->
+        <div class="flex flex-row gap-6 md:gap-12 items-start justify-center w-full px-4">
+            
+            <!-- Local Player (You) -->
+            <div class="flex flex-col items-center relative">
+                <div class="flex justify-between w-full mb-2 px-2">
+                    <h2 class="text-2xl font-bold text-cyan-400 glow-text-p1">YOU</h2>
+                    <span id="score-local" class="font-mono text-2xl text-white font-bold">0</span>
+                </div>
+                <div class="canvas-container border-2 border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.3)]">
+                    <canvas id="board-local"></canvas>
+                    <div class="absolute right-0 bottom-0 w-2 bg-gradient-to-t from-red-600 to-red-400 rounded-t transition-all duration-300" id="garbage-meter-local" style="height: 0%;"></div>
+                </div>
+                <div class="mt-4 text-sm text-slate-300 text-center flex flex-col gap-1 font-medium bg-slate-800/50 p-2 rounded-lg w-full">
+                    <span>이동: ← → | 회전: ↑</span>
+                    <span>가속: ↓ | 하드드롭: Space</span>
+                </div>
+                <div id="augments-active-local" class="flex flex-wrap gap-2 mt-4 w-full justify-center min-h-[40px]"></div>
+            </div>
+
+            <!-- UI Center Matchmaking & Status -->
+            <div class="flex flex-col items-center justify-start w-48 shrink-0 pt-10">
+                
+                <div id="lobby-ui" class="flex flex-col items-center w-full">
+                    <div class="text-sm text-slate-400 mb-2">접속 ID</div>
+                    <div class="text-xs font-mono text-slate-500 mb-6 bg-slate-900 p-1 rounded" id="user-id">Connecting...</div>
+                    
+                    <button id="find-match-btn" class="w-full px-6 py-4 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 rounded-xl font-black text-lg shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+                        온라인 매칭 찾기
+                    </button>
+                    <p id="match-status" class="mt-4 text-sm font-bold text-amber-400 text-center h-10"></p>
+                </div>
+
+                <div id="game-ui" class="hidden flex-col items-center w-full">
+                    <div class="text-center mb-8 bg-slate-800/80 p-4 rounded-xl border border-slate-700 w-full shadow-lg">
+                        <div class="text-xs text-slate-400 mb-1">상점까지 남은 줄</div>
+                        <div class="text-4xl font-black text-amber-400 drop-shadow-[0_0_10px_rgba(251,191,36,0.6)]" id="augment-countdown">20</div>
+                    </div>
+                    <div class="text-center">
+                        <span class="px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-xs font-bold border border-green-500/30 shadow-[0_0_10px_rgba(34,197,94,0.3)]">온라인 대결 중</span>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Remote Player (Opponent) -->
+            <div class="flex flex-col items-center relative opacity-80 transition-opacity" id="remote-player-container">
+                <div class="flex justify-between w-full mb-2 px-2">
+                    <span id="score-remote" class="font-mono text-2xl text-white font-bold">0</span>
+                    <h2 class="text-2xl font-bold text-pink-400 glow-text-p2">OPPONENT</h2>
+                </div>
+                <div class="canvas-container border-2 border-pink-500/30 shadow-[0_0_15px_rgba(244,114,182,0.2)]">
+                    <canvas id="board-remote"></canvas>
+                    <div class="absolute left-0 bottom-0 w-2 bg-gradient-to-t from-red-600 to-red-400 rounded-t transition-all duration-300" id="garbage-meter-remote" style="height: 0%;"></div>
+                </div>
+                <div class="mt-4 text-sm text-slate-500 text-center flex flex-col gap-1 w-full bg-slate-800/30 p-2 rounded-lg" id="remote-status-text">
+                    <span>실시간 동기화 대기 중</span>
+                </div>
+                <div id="augments-active-remote" class="flex flex-wrap gap-2 mt-4 w-full justify-center min-h-[40px]"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Augment Selection Modal -->
+    <div id="augment-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/90 animate-fade-in">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 md:p-8 max-w-5xl w-full mx-4 shadow-2xl flex flex-col max-h-[90vh]">
+            <div class="text-center mb-6">
+                <h2 class="text-3xl font-black text-amber-400 mb-2 drop-shadow-md">상점 (아이템 선택)</h2>
+                <p class="text-slate-300">각 플레이어는 하나의 아이템을 선택하여 능력을 강화하세요!</p>
+            </div>
+            
+            <div class="flex flex-col md:flex-row gap-6 w-full flex-1 overflow-hidden">
+                <div class="flex-1 bg-slate-800/60 rounded-xl p-4 border border-cyan-900 flex flex-col">
+                    <h3 class="text-cyan-400 font-bold text-lg mb-4 text-center">당신의 선택</h3>
+                    <div class="flex flex-col gap-3 overflow-y-auto pr-2 pb-2" id="aug-choices-local"></div>
+                    <div class="mt-4 text-center h-8 flex items-center justify-center text-sm font-bold text-cyan-300 bg-slate-900/50 rounded-lg" id="aug-status-local">아이템을 선택하세요</div>
+                </div>
+
+                <div class="hidden md:block w-px bg-slate-700"></div>
+
+                <div class="flex-1 bg-slate-800/60 rounded-xl p-4 border border-pink-900 flex flex-col relative">
+                    <h3 class="text-pink-400 font-bold text-lg mb-4 text-center">상대방 선택</h3>
+                    <div class="flex flex-col gap-3 overflow-y-auto pr-2 pb-2 opacity-50 pointer-events-none" id="aug-choices-remote"></div>
+                    <div class="absolute inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center rounded-xl z-10" id="remote-waiting-overlay">
+                        <div class="text-pink-400 font-bold flex items-center gap-2 bg-slate-900/80 px-4 py-2 rounded-full">
+                            <svg class="spinner w-5 h-5 text-pink-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            상대방의 선택을 기다리는 중...
+                        </div>
+                    </div>
+                    <div class="mt-4 text-center h-8 flex items-center justify-center text-sm font-bold text-pink-300 bg-slate-900/50 rounded-lg" id="aug-status-remote">대기 중...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Over Modal -->
+    <div id="game-over-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/95">
+        <div class="text-center flex flex-col items-center p-12 bg-slate-900/50 border border-slate-700 rounded-3xl backdrop-blur-md">
+            <h2 class="text-7xl font-black mb-6 drop-shadow-[0_0_20px_rgba(255,255,255,0.3)]" id="winner-text">승리!</h2>
+            <p id="game-over-desc" class="text-xl text-slate-300 mb-8">상대방이 넥서스를 파괴당했습니다.</p>
+            <button onclick="window.location.reload()" class="px-10 py-4 bg-white text-black hover:bg-slate-200 rounded-full font-black text-2xl transition-all hover:scale-105 active:scale-95 shadow-[0_0_30px_rgba(255,255,255,0.3)]">
+                새 게임 매칭하기
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. WEBSOCKET SETUP (CLOUDFLARE BACKEND)
+        // ==========================================
+        // 중요: Cloudflare Worker 배포 후 생성된 주소로 교체하세요! (예: wss://my-worker.my-account.workers.dev)
+        const WS_URL = "wss://YOUR_WORKER_URL_HERE.workers.dev";
+        
+        let socket = null;
+        let isHost = false;
+        let isOpponentReady = false;
+        let isLocalReady = false;
+
+        // 임시 User ID 발급 (UI용)
+        const myUserId = Math.random().toString(36).substring(2, 10).toUpperCase();
+        document.getElementById('user-id').innerText = myUserId;
+        document.getElementById('find-match-btn').disabled = false;
+
+        // ==========================================
+        // 2. THE MASSIVE LOL ITEM DATABASE (90+ ITEMS)
+        // ==========================================
+        const RAW_ITEMS = [
+            // 브루저 (전사)
+            { name: "삼위일체", type: "ATK_DEF", desc: "공격 시 쓰레기 1줄 추가, 방어 시 1줄 상쇄.", icon: "🔺" },
+            { name: "몰락한 왕의 검", type: "VAMP", desc: "자신의 줄 삭제 시 상대가 보낸 대기열 쓰레기 2줄 제거.", icon: "🗡️" },
+            { name: "마법사의 최후", type: "DEF_ATK", desc: "받는 쓰레기 줄 20% 감소, 마법 피해(10초마다 1줄 전송).", icon: "⚔️" },
+            { name: "월식", type: "SHIELD_ATK", desc: "2줄 이상 동시 삭제 시 방어막 1칸 생성 및 1줄 추가 전송.", icon: "🌘" },
+            { name: "마나무네", type: "SCALING", desc: "시간이 지날수록 전송하는 쓰레기 양이 증가합니다 (최대 +3).", icon: "💧" },
+            { name: "무라마나", type: "SCALING_MAX", desc: "모든 공격이 +2줄 추가 전송을 가집니다.", icon: "⚡" },
+            { name: "맬모셔스의 아귀", type: "MAGIC_DEF", desc: "쓰레기 대기열이 8줄 이상일 때 절반을 무효화합니다 (쿨타임).", icon: "🛡️" },
+            { name: "화공 펑크 사슬검", type: "WOUND", desc: "상대가 방어/회복 아이템 효과를 받을 때 그 효과를 50% 감소시킴.", icon: "⛓️" },
+            { name: "쇼진의 창", type: "SPEED", desc: "블록이 떨어지는 속도가 10% 감소하여 여유가 생깁니다.", icon: "🐉" },
+            { name: "실험적 마공학판", type: "ULTIMATE", desc: "증강 선택 후 30초 동안 보내는 모든 쓰레기 줄 2배.", icon: "⚙️" },
+            { name: "선체파괴자", type: "SIEGE", desc: "상대방의 빈 공간이 많은 줄을 타겟으로 쓰레기를 보냅니다.", icon: "⚓" },
+            { name: "칠흑의 양날 도끼", type: "SHRED", desc: "연속해서 줄을 지울 때마다(콤보) 추가 쓰레기 줄 +1 중첩.", icon: "🪓" },
+            { name: "갈라진 하늘", type: "CRIT_HEAL", desc: "첫 4줄(테트리스) 삭제 시 자신의 밑바닥 3줄을 삭제합니다.", icon: "☁️" },
+            { name: "끝없는 갈망", type: "SUSTAIN", desc: "블록 10개 놓을 때마다 대기열 쓰레기 1줄 상쇄.", icon: "🩸" },
+            { name: "지배자의 피갑옷", type: "HP_ATK", desc: "내 보드에 쌓인 블록이 높을수록 쓰레기 전송량이 증가합니다.", icon: "🩸" },
+            { name: "굶주린 히드라", type: "AOE_VAMP", desc: "줄 삭제 시 30% 확률로 아래 2줄을 추가로 지웁니다.", icon: "🐍" },
+            { name: "거대한 히드라", type: "AOE_HP", desc: "내가 받는 쓰레기 줄이 생성될 때 20% 확률로 튕겨냅니다.", icon: "🐉" },
+            { name: "발걸음 분쇄기", type: "SLOW", desc: "쓰레기를 보낼 때 상대의 블록 낙하 속도를 3초간 가속시킵니다.", icon: "👢" },
+            { name: "스테락의 도전", type: "LAST_STAND", desc: "패배 위기 시 모든 쓰레기 대기열을 취소하고 방어막 3 획득.", icon: "💪" },
+            { name: "죽음의 무도", type: "DELAY", desc: "받는 쓰레기 줄이 즉시 적용되지 않고 3초에 걸쳐 천천히 올라옵니다.", icon: "💃" },
+            { name: "수호 천사", type: "REVIVE", desc: "게임 오버 시 1회에 한해 하단 10줄을 삭제하고 부활합니다.", icon: "👼" },
+            
+            // 원거리 딜러
+            { name: "정수 약탈자", type: "MANA_ATK", desc: "하드 드롭 시 10% 확률로 1줄 전송.", icon: "🔷" },
+            { name: "징수의 총", type: "EXECUTE", desc: "상대 블록이 상단 4줄 이내일 때 쓰레기를 보내면 즉사(추가 5줄)시킴.", icon: "🔫" },
+            { name: "마법광학 장치 C44", type: "TRAP", desc: "상대방 보드에 지울 수 없는 폭탄 블록을 1개 섞어 보냅니다.", icon: "💣" },
+            { name: "윤 탈 야생화살", type: "BLEED", desc: "쓰레기 전송 후 5초 뒤에 1줄이 추가로 전송됩니다.", icon: "🏹" },
+            { name: "크라켄 학살자", type: "THIRD_HIT", desc: "3번째 줄 삭제마다 강력한 3줄 쓰레기 폭탄을 보냅니다.", icon: "🦑" },
+            { name: "스태틱의 단검", type: "CHAIN_LIGHTNING", desc: "줄 삭제 시 상대방의 맨 위 블록 3개를 파괴시킵니다.", icon: "⚡" },
+            { name: "폭풍갈퀴", type: "BURST_SLOW", desc: "10초마다 다음 전송하는 쓰레기가 상대를 2초간 멈추게 합니다.", icon: "🌩️" },
+            { name: "유령 무희", type: "GHOST", desc: "블록을 움직일 때 딜레이(ARR)가 극단적으로 짧아집니다.", icon: "👻" },
+            { name: "루난의 허리케인", type: "SPLIT", desc: "전송하는 쓰레기가 무작위로 2~3줄 나뉘어 더 복잡하게 섞입니다.", icon: "🌪️" },
+            { name: "고속 연사포", type: "RANGE", desc: "소프트 드롭 속도가 2배 빨라지고 점수 획득이 증가합니다.", icon: "🔥" },
+            { name: "나보리 명멸검", type: "CD_REDUCTION", desc: "줄을 지울 때마다 다른 아이템의 쿨타임이 2초 감소합니다.", icon: "🗡️" },
+            { name: "악마사냥꾼의 화살", type: "GIANT_KILLER", desc: "상대의 보드 높이가 나보다 높으면 쓰레기 +2줄 추가.", icon: "🏹" },
+            { name: "도미닉 경의 인사", type: "ARMOR_PEN", desc: "상대의 방어 아이템 효과를 70% 무시하고 공격합니다.", icon: "🏹" },
+            { name: "필멸자의 운명", type: "ANTI_HEAL", desc: "상대가 줄을 지워도 쓰레기 대기열이 줄어들지 않게 합니다(3초).", icon: "☠️" },
+            { name: "경계", type: "HYBRID", desc: "공격 시 빛(전송+1), 방어 시 어둠(상쇄+1) 스택이 교대로 쌓입니다.", icon: "⚖️" },
+            { name: "구인수의 격노검", type: "STACK_ATK", desc: "연속 공격 시 전송량이 1, 1, 2, 2, 3으로 점진적 증가합니다.", icon: "🔥" },
+            { name: "무한의 대검", type: "CRIT", desc: "테트리스(4줄) 동시 삭제 시 상대에게 보내는 쓰레기 2배 증가.", icon: "⚔️" },
+            { name: "불멸의 철갑궁", type: "LIFESTEAL_SHIELD", desc: "위험 상태(상단 5줄) 진입 시 즉시 5줄을 지우고 방어막 생성.", icon: "🛡️" },
+            { name: "피바라기", type: "OVERHEAL", desc: "보드가 비어있을 때 줄을 지우면 상대에게 평소보다 2배 전송.", icon: "🩸" },
+            { name: "헤르메스의 시미터", type: "CLEANSE", desc: "사용 시(쿨 30초) 받은 방해 효과와 대기열 쓰레기를 모두 지웁니다.", icon: "🗡️" },
+            
+            // 암살자
+            { name: "독사의 송곳니", type: "ANTI_SHIELD", desc: "상대방의 실드 및 방어 아이템을 완전히 파괴합니다.", icon: "🐍" },
+            { name: "그림자 검", type: "VISION", desc: "상대방이 내 다음 블록을 보지 못하게 가립니다.", icon: "🗡️" },
+            { name: "요우무의 유령검", type: "SPEED_UP", desc: "15초마다 5초 동안 블록 이동 및 회전 속도가 극대화됩니다.", icon: "👻" },
+            { name: "밤의 끝자락", type: "SPELL_SHIELD", desc: "다음으로 받는 대량의 쓰레기(3줄 이상) 공격을 1회 무효화.", icon: "🌙" },
+            { name: "벼락폭풍검", type: "BURST", desc: "블록을 착지하자마자 지우면 2줄을 추가로 보냅니다.", icon: "⚡" },
+            { name: "오만", type: "SNOWBALL", desc: "상대에게 쓰레기를 보낼 때마다 영구적으로 공격력(전송+10%) 증가.", icon: "👑" },
+            { name: "원칙의 원형낫", type: "REFRESH", desc: "상대가 위기에 처하면 내 아이템 쿨타임이 초기화됩니다.", icon: "🌙" },
+            { name: "불경한 히드라", type: "ASSASSIN_AOE", desc: "줄 삭제 시 상대 보드 무작위 위치에 블록 3개를 추가합니다.", icon: "🌑" },
+            { name: "요새파괴자", type: "TOWER_DIVE", desc: "적 보드가 낮을 때 쓰레기를 보내면 방어를 무시합니다.", icon: "🏰" },
+            { name: "세릴다의 원한", type: "SLOW_PEN", desc: "공격받은 적은 3초간 블록 좌우 이동 속도가 느려집니다.", icon: "❄️" },
+            
+            // 마법사
+            { name: "메자이의 영혼약탈자", type: "RISK_REWARD", desc: "줄을 지울 때마다 강해지지만, 쓰레기를 받으면 스택을 잃습니다.", icon: "📖" },
+            { name: "영겁의 지팡이", type: "SCALING_DEF", desc: "1분이 지날 때마다 받는 쓰레기가 1줄씩 영구 감소합니다.", icon: "⚕️" },
+            { name: "대천사의 포옹", type: "MANA_SHIELD", desc: "마나(점수)가 5000 이상일 때 치명적인 공격을 흡수하는 실드 생성.", icon: "👼" },
+            { name: "악의", type: "ULT_BURN", desc: "4줄(테트리스) 삭제 시 상대 필드에 5초간 지워지지 않는 화염 지대 생성.", icon: "🔥" },
+            { name: "어둠불꽃 횃불", type: "DOT_DMG", desc: "매 5초마다 1개의 불타는 블록(가비지)을 보냅니다.", icon: "🔥" },
+            { name: "루덴의 메아리", type: "SPLASH", desc: "줄 삭제 시 1줄이 추가되며, 주변 보드에도 작은 영향을 줍니다.", icon: "🪄" },
+            { name: "실체화 장비", type: "CRAFT", desc: "일정 확률로 'I' 자 블록(긴 작대기)이 연속해서 나옵니다.", icon: "⚙️" },
+            { name: "마법공학 로켓 벨트", type: "DASH", desc: "위급 시 블록을 강제로 바닥 빈 공간에 맞춰 넣습니다 (자동 조준).", icon: "🚀" },
+            { name: "라일라이의 수정홀", type: "SLOW_BURN", desc: "보낸 쓰레기 줄이 회색(가비지)이 아닌 빙결(단단한) 블록으로 변함.", icon: "🧊" },
+            { name: "리안드리의 고통", type: "MAX_HP_BURN", desc: "상대 보드가 높을수록 매 초마다 점수를 빼앗고 쓰레기를 보냄.", icon: "🎭" },
+            { name: "우주의 추진력", type: "MOVE_SPEED", desc: "콤보 3 이상일 때 블록 낙하 속도를 완벽히 제어할 수 있습니다.", icon: "🌌" },
+            { name: "균열 생성기", type: "TRUE_DMG", desc: "긴 전투 시 공격이 방어 불가능한 '고정 피해' 쓰레기로 바뀝니다.", icon: "👁️" },
+            { name: "황혼과 새벽", type: "PHASE", desc: "10초마다 공/수 모드가 전환되며 강력한 보너스를 받습니다.", icon: "🌗" },
+            { name: "모렐로노미콘", type: "ANTI_HEAL_AP", desc: "내가 보낸 쓰레기는 10초 동안 지울 수 없습니다.", icon: "📓" },
+            { name: "내셔의 이빨", type: "ATTACK_SPEED", desc: "블록이 땅에 닿는 즉시 다음 블록이 딜레이 없이 생성됩니다.", icon: "🦷" },
+            { name: "리치베인", type: "SPELLBLADE", desc: "홀드(Hold) 기능을 사용한 후 지운 첫 줄은 3배의 위력을 가집니다.", icon: "🗡️" },
+            { name: "지평선의 초점", type: "REVEAL", desc: "상대의 홀드 블록과 다음 블록 3개를 내 화면에서 확인합니다.", icon: "🎯" },
+            { name: "공허의 지팡이", type: "MAGIC_PEN", desc: "상대의 모든 방어형 증강 효과를 40% 무시합니다.", icon: "🔮" },
+            { name: "무덤꽃", type: "HEAL_NOVA", desc: "테트리스(4줄) 삭제 시 나와 상대 모두 맨 아래 2줄이 깔끔해집니다.", icon: "🌸" },
+            { name: "핏빛 저주", type: "SACRIFICE", desc: "내 보드에 무작위 쓰레기 1줄을 생성하는 대신 상대에게 4줄 전송.", icon: "🩸" },
+            { name: "폭풍 쇄도", type: "EXECUTE_AP", desc: "짧은 시간 내 대량 공격 시 번개가 쳐 추가 2줄 전송.", icon: "🌩️" },
+            { name: "그림자불꽃", type: "CRIT_AP", desc: "위기에 처한 상대에게 보내는 모든 공격이 치명타(2배) 적용.", icon: "🔥" },
+            { name: "밴시의 장막", type: "SPELL_SHIELD_AP", desc: "상대가 보내는 첫 번째 쓰레기 공격을 완전히 방어(쿨 20초).", icon: "🛡️" },
+            { name: "존야의 모래시계", type: "STASIS", desc: "블록이 맨 위로 닿을 시 3초간 무적 상태가 되며 보드를 정리할 기회 제공.", icon: "⏳" },
+            { name: "라바돈의 죽음모자", type: "AP_MULTIPLIER", desc: "모든 줄 삭제 시 점수 및 전송량이 50% 폭증합니다.", icon: "🎩" },
+
+            // 탱커
+            { name: "강철심장", type: "HP_STACK", desc: "10초마다 깡 ! 소리와 함께 다음 받는 쓰레기를 영구 체력(방어력)으로 흡수.", icon: "❤️" },
+            { name: "워모그의 갑옷", type: "REGEN", desc: "공격받지 않고 5초 경과 시, 대기열 쓰레기가 1초당 1줄씩 사라집니다.", icon: "💚" },
+            { name: "종말의 겨울", type: "MANA_SHIELD_TANK", desc: "하드 드롭 시 10% 확률로 1줄 분량의 실드를 얻습니다.", icon: "❄️" },
+            { name: "태양불꽃 방패", type: "SUNFIRE", desc: "내 보드 높이가 10줄 이상일 때, 매 초 상대에게 0.2줄씩 보냅니다.", icon: "☀️" },
+            { name: "얼어붙은 심장", type: "ATK_SPEED_SLOW", desc: "상대방의 블록 이동 속도와 낙하 속도를 영구적으로 15% 늦춥니다.", icon: "💙" },
+            { name: "가시 갑옷", type: "REFLECT", desc: "받은 쓰레기 줄의 30%를 상대에게 되돌려줍니다.", icon: "🌵" },
+            { name: "란두인의 예언", type: "CRIT_DEF", desc: "상대의 치명타(2배 전송 등) 및 테트리스 효과를 일반 공격으로 감소시킵니다.", icon: "🛡️" },
+            { name: "끝없는 절망", type: "DRAIN", desc: "7초마다 주위(상대)의 블록 1개를 파괴하고 내 쓰레기 1개를 지웁니다.", icon: "🌀" },
+            { name: "얼어붙은 건틀릿", type: "SLOW_FIELD", desc: "줄 삭제 시 상대 보드 중앙에 블록이 천천히 떨어지는 구역 생성.", icon: "🧤" },
+            { name: "망자의 갑옷", type: "MOMENTUM", desc: "줄을 지우지 않고 버틸수록 다음 공격의 위력이 강해집니다.", icon: "🏃" },
+            { name: "공허한 광휘", type: "WAVE_CLEAR", desc: "쓰레기 줄을 한 번 지우면 연결된 쓰레기 줄이 모두 함께 파괴됩니다.", icon: "✨" },
+            { name: "정령의 형상", type: "HEAL_AMP", desc: "모든 쓰레기 감소 및 보드 클리어 효과가 25% 증가합니다.", icon: "👻" },
+            { name: "케이닉 루컨", type: "MAGIC_SHIELD", desc: "일정 시간 피해를 받지 않으면 거대한 마법 실드(5줄 방어) 생성.", icon: "🛡️" },
+            { name: "심연의 가면", type: "MAGIC_VULN", desc: "내 근처(상대가 나에게 보낼 때) 상대방의 방어력을 깎아 공격 반환.", icon: "🎭" },
+            { name: "대자연의 힘", type: "MOVE_RESIST", desc: "연속해서 공격받으면 이동 속도가 대폭 증가하고 방어력이 오릅니다.", icon: "🌿" },
+            { name: "지크의 융합", type: "ALLY_BUFF", desc: "테트리스 시 나와 상대의 보드 일부를 얼려 상대만 조작을 방해함.", icon: "❄️" },
+            { name: "해신 작쇼", type: "RESIST_STACK", desc: "전투가 길어질수록(시간 경과) 모든 받는 쓰레기가 최대 30% 감소.", icon: "🦑" },
+
+            // 서포터
+            { name: "자자크의 세계가시", type: "POKE", desc: "45초마다 블록 하나를 지울 때 상대에게 확정적으로 2줄 전송.", icon: "🌱" },
+            { name: "피의 노래", type: "WEAKEN", desc: "내가 보낸 공격을 받은 상대는 다음 5초간 받는 쓰레기 10% 증가.", icon: "🎵" },
+            { name: "태양의 썰매", type: "SPEED_HEAL", desc: "위기 탈출 시 보드 정리 속도가 빨라지고 2줄 추가 회복.", icon: "🛷" },
+            { name: "꿈 생성기", type: "BUBBLE", desc: "일정 주기마다 내 보드에 파란색 버블이 생겨, 닿으면 1줄 삭제.", icon: "💭" },
+            { name: "천상의 이의", type: "DAMAGE_REDUCTION", desc: "상대가 테트리스(4줄) 공격 시 받는 피해를 절반으로 줄입니다.", icon: "🛡️" },
+            { name: "슈렐리아의 군가", type: "TEAM_SPEED", desc: "사용 시(자동) 3초간 블록 즉시 착지(하드드롭 무한) 모드 진입.", icon: "👑" },
+            { name: "헬리아의 메아리", type: "SOUL_HEAL", desc: "공격 시 영혼이 쌓이며, 위험 시 영혼을 소모해 보드를 정리합니다.", icon: "🔮" },
+            { name: "월석 재생기", type: "CHAIN_HEAL", desc: "내가 1줄 지울 때마다 일정 확률로 아래 1줄이 추가 재생(삭제)됩니다.", icon: "🌙" },
+            { name: "악곡의 왕관", type: "BURST_DEF", desc: "게임 시작 및 증강 선택 후 10초간 받는 모든 피해 무효화.", icon: "👑" },
+            { name: "기사의 맹세", type: "REDIRECT", desc: "상대의 공격 일부를 무위로 돌립니다 (서포팅 타겟 없음 패널티 상쇄).", icon: "🛡️" },
+            { name: "강철의 솔라리 펜던트", type: "TEAM_SHIELD", desc: "양쪽 모두에게 거대한 방어막(3줄)을 제공합니다. (평화주의).", icon: "☀️" },
+            { name: "제국의 명령", type: "MARK", desc: "특정 블록(예: 'O'블록)으로 줄 삭제 시 강력한 추가 폭발 전송.", icon: "👁️" },
+            { name: "불타는 향로", type: "ATK_SPEED_BUFF", desc: "연속 삭제 시 내 블록 생성 속도와 조작 속도 대폭 향상.", icon: "🔥" },
+            { name: "흐르는 물의 지팡이", type: "AP_BUFF", desc: "효과 발동 시 다음 3개의 블록이 무조건 'I'(일자) 블록으로 등장.", icon: "💧" },
+            { name: "구원", type: "GLOBAL_HEAL", desc: "보드에 거대한 원이 생기며 3초 뒤 하단 5줄이 완전히 정화됩니다.", icon: "✨" },
+            { name: "미카엘의 축복", type: "CLEANSE_SUPP", desc: "방해 효과(속도 저하, 시야 가림 등) 면역 상태를 상시 유지합니다.", icon: "🔔" }
+        ];
+
+        const AUGMENTS = RAW_ITEMS.map((item, idx) => ({
+            id: `aug_${idx}`,
+            ...item,
+            tier: Math.random() > 0.8 ? 'tier-legendary' : (Math.random() > 0.5 ? 'tier-epic' : 'text-slate-200')
+        }));
+        const getAugmentById = (id) => AUGMENTS.find(a => a.id === id);
+
+        // ==========================================
+        // 3. TETRIS ENGINE CONSTANTS
+        // ==========================================
+        const COLS = 10, ROWS = 20;
+        const COLORS = [null, '#06b6d4', '#3b82f6', '#f97316', '#eab308', '#22c55e', '#a855f7', '#ef4444', '#475569'];
+        const SHAPES = [
+            [],
+            [[0, 0, 0, 0], [1, 1, 1, 1], [0, 0, 0, 0], [0, 0, 0, 0]],
+            [[2, 0, 0], [2, 2, 2], [0, 0, 0]],
+            [[0, 0, 3], [3, 3, 3], [0, 0, 0]],
+            [[4, 4], [4, 4]],
+            [[0, 5, 5], [5, 5, 0], [0, 0, 0]],
+            [[0, 6, 0], [6, 6, 6], [0, 0, 0]],
+            [[7, 7, 0], [0, 7, 7], [0, 0, 0]]
+        ];
+
+        function createMatrix(w, h) {
+            const m = [];
+            while (h--) m.push(new Array(w).fill(0));
+            return m;
+        }
+
+        // ==========================================
+        // 4. GAME ENGINE
+        // ==========================================
+        let gameState = 'MENU'; 
+        let lastTime = 0;
+        let linesUntilAugment = 20;
+        const LINES_PER_AUGMENT = 20;
+        let localPlayer, remotePlayer;
+        const keys = {};
+
+        class PlayerEngine {
+            constructor(canvasId, isLocal) {
+                this.canvas = document.getElementById(canvasId);
+                this.ctx = this.canvas.getContext('2d');
+                this.isLocal = isLocal;
+                this.board = createMatrix(COLS, ROWS);
+                
+                this.setupCanvas();
+                this.resetStats();
+                
+                this.pos = {x: 0, y: 0};
+                this.matrix = null;
+                
+                this.dasDelay = 130; 
+                this.arrSpeed = 30; 
+                this.moveTimer = 0;
+                this.lastDir = 0;
+                this.isDasActive = false;
+                this.dropCounter = 0;
+                this.dropInterval = 1000;
+                this.lockDelay = 500;
+                this.lockTimer = 0;
+
+                this.domScore = document.getElementById(isLocal ? 'score-local' : 'score-remote');
+                this.domGarbage = document.getElementById(isLocal ? 'garbage-meter-local' : 'garbage-meter-remote');
+                this.domAugments = document.getElementById(isLocal ? 'augments-active-local' : 'augments-active-remote');
+
+                if (isLocal) this.resetPiece();
+            }
+
+            resetStats() {
+                this.score = 0;
+                this.garbageQueue = 0;
+                this.activeAugments = [];
+                this.effects = {
+                    sendMultiplier: 1.0, recvMultiplier: 1.0, 
+                    flatSend: 0, flatDef: 0, reviveUsed: false,
+                    scoreMulti: 1.0, immune: false
+                };
+            }
+
+            setupCanvas() {
+                const dpr = window.devicePixelRatio || 1;
+                const rect = this.canvas.getBoundingClientRect();
+                this.canvas.width = rect.width * dpr;
+                this.canvas.height = rect.height * dpr;
+                this.ctx.scale(dpr, dpr);
+                this.renderBlockSize = rect.width / COLS; 
+            }
+
+            resetPiece() {
+                const pieces = 'ILJOTSZ';
+                const type = pieces[pieces.length * Math.random() | 0];
+                const index = ' I JLOS TZ'.indexOf(type);
+                this.matrix = SHAPES[index].map(row => [...row]);
+                this.pos.y = 0;
+                this.pos.x = Math.floor(COLS / 2) - Math.floor(this.matrix[0].length / 2);
+                this.lockTimer = 0;
+
+                if (this.collide()) {
+                    if (this.hasEffect('REVIVE') && !this.effects.reviveUsed) {
+                        this.effects.reviveUsed = true;
+                        this.board = createMatrix(COLS, ROWS); 
+                    } else {
+                        triggerGameOverLocal();
+                    }
+                }
+            }
+
+            hasEffect(typeStr) { return this.activeAugments.some(id => getAugmentById(id)?.type.includes(typeStr)); }
+
+            drawBlock(x, y, value, isGhost = false) {
+                if (value === 0) return;
+                const bs = this.renderBlockSize, px = x * bs, py = y * bs;
+                const color = COLORS[value];
+                
+                this.ctx.fillStyle = color;
+                if (isGhost) {
+                    this.ctx.globalAlpha = 0.2;
+                    this.ctx.fillRect(px+1, py+1, bs-2, bs-2);
+                    this.ctx.globalAlpha = 1.0;
+                    this.ctx.strokeStyle = color;
+                    this.ctx.strokeRect(px+1, py+1, bs-2, bs-2);
+                } else {
+                    this.ctx.fillRect(px, py, bs, bs);
+                    this.ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                    this.ctx.fillRect(px, py, bs, 3); 
+                    this.ctx.fillRect(px, py, 3, bs); 
+                    this.ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    this.ctx.fillRect(px, py + bs - 3, bs, 3);
+                    this.ctx.fillRect(px + bs - 3, py, 3, bs); 
+                }
+            }
+
+            draw() {
+                this.ctx.fillStyle = '#020617';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.ctx.strokeStyle = '#1e293b';
+                this.ctx.lineWidth = 1;
+                const bs = this.renderBlockSize;
+                for(let i=0; i<=COLS; i++) { this.ctx.beginPath(); this.ctx.moveTo(i*bs, 0); this.ctx.lineTo(i*bs, ROWS*bs); this.ctx.stroke(); }
+                for(let j=0; j<=ROWS; j++) { this.ctx.beginPath(); this.ctx.moveTo(0, j*bs); this.ctx.lineTo(COLS*bs, j*bs); this.ctx.stroke(); }
+
+                this.board.forEach((row, y) => row.forEach((val, x) => this.drawBlock(x, y, val)));
+
+                if (this.isLocal && this.matrix && gameState === 'PLAYING') {
+                    const ghost = { x: this.pos.x, y: this.pos.y };
+                    while (!this.collideAt(this.matrix, ghost.x, ghost.y + 1)) ghost.y++;
+                    this.matrix.forEach((row, y) => row.forEach((val, x) => this.drawBlock(ghost.x + x, ghost.y + y, val, true)));
+                    this.matrix.forEach((row, y) => row.forEach((val, x) => this.drawBlock(this.pos.x + x, this.pos.y + y, val)));
+                }
+
+                if (this.garbageQueue > 0) {
+                     this.ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+                     this.ctx.fillRect(0, (ROWS - this.garbageQueue) * bs, COLS * bs, this.garbageQueue * bs);
+                }
+            }
+
+            collideAt(m, x, y) {
+                for (let r=0; r<m.length; ++r) {
+                    for (let c=0; c<m[r].length; ++c) {
+                        if (m[r][c] !== 0 && (this.board[y + r] && this.board[y + r][x + c]) !== 0) return true;
+                    }
+                }
+                return false;
+            }
+            collide() { return this.collideAt(this.matrix, this.pos.x, this.pos.y); }
+
+            merge() {
+                this.matrix.forEach((row, y) => {
+                    row.forEach((value, x) => {
+                        if (value !== 0) this.board[this.pos.y + y][this.pos.x + x] = value;
+                    });
+                });
+            }
+
+            rotate(m, dir) {
+                for(let y=0; y<m.length; ++y) {
+                    for(let x=0; x<y; ++x) [m[x][y], m[y][x]] = [m[y][x], m[x][y]];
+                }
+                if(dir > 0) m.forEach(row => row.reverse());
+                else m.reverse();
+            }
+
+            playerRotate(dir) {
+                const pos = this.pos.x;
+                let offset = 1;
+                this.rotate(this.matrix, dir);
+                while (this.collide()) {
+                    this.pos.x += offset;
+                    offset = -(offset + (offset > 0 ? 1 : -1));
+                    if (offset > this.matrix[0].length) {
+                        this.rotate(this.matrix, -dir); 
+                        this.pos.x = pos;
+                        return;
+                    }
+                }
+                this.lockTimer = 0;
+            }
+
+            playerMove(dir) {
+                this.pos.x += dir;
+                if (this.collide()) this.pos.x -= dir;
+                else this.lockTimer = 0;
+            }
+
+            playerDrop() {
+                this.pos.y++;
+                if (this.collide()) {
+                    this.pos.y--;
+                    this.lockTimer += 16;
+                    return true;
+                }
+                this.dropCounter = 0;
+                return false;
+            }
+
+            hardDrop() {
+                while (!this.collide()) this.pos.y++;
+                this.pos.y--;
+                this.lockPiece();
+                this.dropCounter = 0;
+            }
+
+            lockPiece() {
+                this.merge();
+                this.lineClear();
+                this.processGarbage();
+                this.resetPiece();
+                syncStateToWS(); 
+            }
+
+            lineClear() {
+                let linesCleared = 0;
+                outer: for (let y = ROWS - 1; y >= 0; --y) {
+                    for (let x = 0; x < COLS; ++x) {
+                        if (this.board[y][x] === 0) continue outer;
+                    }
+                    const row = this.board.splice(y, 1)[0].fill(0);
+                    this.board.unshift(row);
+                    ++y; linesCleared++;
+                }
+
+                if (linesCleared > 0 && this.hasEffect('AOE_VAMP') && Math.random() < 0.3) {
+                    this.board.splice(ROWS-1, 1);
+                    this.board.unshift(new Array(COLS).fill(0));
+                    linesCleared++;
+                }
+
+                if (linesCleared > 0) {
+                    let pts = [0, 100, 300, 500, 800][linesCleared] * this.effects.scoreMulti;
+                    if(this.hasEffect('AP_MULTIPLIER')) pts *= 1.5;
+                    this.score += pts;
+                    this.domScore.innerText = this.score;
+
+                    let garbageToSend = [0, 0, 1, 2, 4][linesCleared] || 4;
+                    
+                    if (garbageToSend > 0) {
+                        garbageToSend = Math.floor(garbageToSend * this.effects.sendMultiplier) + this.effects.flatSend;
+                        if(linesCleared >= 4 && this.hasEffect('CRIT')) garbageToSend *= 2; 
+                        if(this.hasEffect('SCALING_MAX')) garbageToSend += 2; 
+
+                        if (this.garbageQueue > 0) {
+                            if (this.garbageQueue >= garbageToSend) {
+                                this.garbageQueue -= garbageToSend; garbageToSend = 0;
+                            } else {
+                                garbageToSend -= this.garbageQueue; this.garbageQueue = 0;
+                            }
+                            this.updateGarbageUI();
+                        }
+                        
+                        if (garbageToSend > 0 && socket) {
+                            socket.send(JSON.stringify({ type: 'GARBAGE_SENT', lines: garbageToSend }));
+                        }
+                    }
+
+                    if (isHost && gameState === 'PLAYING') {
+                        linesUntilAugment -= linesCleared;
+                        updateCountdownUI();
+                        if (linesUntilAugment <= 0) {
+                            triggerAugmentPhaseWS();
+                        }
+                    }
+                }
+            }
+
+            receiveGarbage(lines) {
+                if (this.effects.immune) return;
+                let finalLines = Math.floor(lines * this.effects.recvMultiplier) - this.effects.flatDef;
+                if(this.hasEffect('DEF_ATK')) finalLines = Math.floor(finalLines * 0.8);
+                if (finalLines > 0) {
+                    this.garbageQueue += finalLines;
+                    this.updateGarbageUI();
+                }
+            }
+
+            processGarbage() {
+                if (this.garbageQueue <= 0) return;
+                const linesToAdd = this.garbageQueue;
+                this.garbageQueue = 0;
+                this.updateGarbageUI();
+
+                const hole = Math.floor(Math.random() * COLS);
+                for (let i = 0; i < linesToAdd; i++) {
+                    const row = new Array(COLS).fill(8); 
+                    row[hole] = 0;
+                    this.board.shift(); 
+                    this.board.push(row);
+                }
+            }
+
+            updateGarbageUI() {
+                const height = Math.min(100, (this.garbageQueue / 15) * 100);
+                this.domGarbage.style.height = `${height}%`;
+            }
+
+            applyAugment(augId) {
+                if(this.activeAugments.includes(augId)) return;
+                this.activeAugments.push(augId);
+                const augDef = getAugmentById(augId);
+                
+                const icon = document.createElement('div');
+                icon.className = `w-10 h-10 rounded bg-slate-800 border-2 border-slate-600 flex items-center justify-center text-xl shadow-md ${augDef.tier}`;
+                icon.title = `${augDef.name}\n${augDef.desc}`;
+                icon.innerText = augDef.icon;
+                this.domAugments.appendChild(icon);
+
+                if(augDef.type.includes('ATK')) this.effects.flatSend += 1;
+                if(augDef.type.includes('DEF')) this.effects.flatDef += 1;
+                if(augDef.type === 'AP_MULTIPLIER') this.effects.scoreMulti += 0.5;
+            }
+
+            update(dt) {
+                if (!this.isLocal || gameState !== 'PLAYING') return;
+
+                const isMoveLeft = keys['ArrowLeft'];
+                const isMoveRight = keys['ArrowRight'];
+                const dir = (isMoveRight ? 1 : 0) - (isMoveLeft ? 1 : 0);
+
+                if (dir !== 0) {
+                    if (this.lastDir !== dir) {
+                        this.playerMove(dir);
+                        this.moveTimer = 0;
+                        this.isDasActive = false;
+                        this.lastDir = dir;
+                    } else {
+                        this.moveTimer += dt;
+                        if (!this.isDasActive && this.moveTimer > this.dasDelay) {
+                            this.isDasActive = true; this.moveTimer = 0; this.playerMove(dir);
+                        } else if (this.isDasActive && this.moveTimer > this.arrSpeed) {
+                            this.moveTimer = 0; this.playerMove(dir);
+                        }
+                    }
+                } else {
+                    this.lastDir = 0; this.isDasActive = false;
+                }
+
+                this.dropCounter += dt;
+                let currentInterval = keys['ArrowDown'] ? 50 : this.dropInterval;
+                
+                if (this.dropCounter > currentInterval) {
+                    const hitBottom = this.playerDrop();
+                    if (!hitBottom) this.dropCounter = 0;
+                }
+
+                if (this.collideAt(this.matrix, this.pos.x, this.pos.y + 1)) {
+                    this.lockTimer += dt;
+                    if (this.lockTimer > this.lockDelay) this.lockPiece();
+                } else {
+                    this.lockTimer = 0;
+                }
+            }
+
+            setStateFromRemote(stateObj) {
+                if(!stateObj) return;
+                if(stateObj.boardStr) {
+                    const flat = JSON.parse(stateObj.boardStr);
+                    let idx = 0;
+                    for(let r=0; r<ROWS; r++) {
+                        for(let c=0; c<COLS; c++) {
+                            this.board[r][c] = flat[idx++];
+                        }
+                    }
+                }
+                this.score = stateObj.score || 0;
+                this.domScore.innerText = this.score;
+                this.garbageQueue = stateObj.garbageQueue || 0;
+                this.updateGarbageUI();
+                
+                if(stateObj.augments) {
+                    stateObj.augments.forEach(id => this.applyAugment(id));
+                }
+            }
+        }
+
+        // ==========================================
+        // 5. WEBSOCKET MULTIPLAYER LOGIC
+        // ==========================================
+        document.getElementById('find-match-btn').addEventListener('click', () => {
+            const btn = document.getElementById('find-match-btn');
+            const status = document.getElementById('match-status');
+            btn.disabled = true;
+            btn.innerText = "서버 연결 중...";
+
+            if (WS_URL.includes("YOUR_WORKER_URL_HERE")) {
+                status.innerText = "웹소켓 URL이 설정되지 않았습니다. 코드를 확인하세요.";
+                return;
+            }
+
+            try {
+                socket = new WebSocket(WS_URL);
+                
+                socket.onopen = () => {
+                    btn.innerText = "매칭 대기 중...";
+                    status.innerText = "다른 플레이어를 찾고 있습니다.";
+                };
+
+                socket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+
+                    switch (data.type) {
+                        case 'MATCH_FOUND':
+                            isHost = data.isHost;
+                            startGameUI();
+                            break;
+                            
+                        case 'STATE_UPDATE':
+                            if (remotePlayer) remotePlayer.setStateFromRemote(data.state);
+                            break;
+                            
+                        case 'GARBAGE_SENT':
+                            if (localPlayer) localPlayer.receiveGarbage(data.lines);
+                            break;
+
+                        case 'AUGMENT_PHASE':
+                            gameState = 'AUGMENT';
+                            isLocalReady = false;
+                            isOpponentReady = false;
+                            openAugmentModal(data.choices);
+                            break;
+
+                        case 'AUGMENT_CHOICE':
+                            isOpponentReady = true;
+                            if (gameState === 'AUGMENT') {
+                                document.getElementById('remote-waiting-overlay').classList.add('hidden');
+                                document.getElementById('aug-status-remote').innerText = "상대방 선택 완료!";
+                                document.getElementById('aug-status-remote').className = "mt-4 text-center h-8 flex items-center justify-center text-sm font-bold text-pink-400 bg-slate-900/50 rounded-lg animate-pulse";
+                            }
+                            if (isHost && isLocalReady && isOpponentReady) {
+                                socket.send(JSON.stringify({ type: 'RESUME_GAME' }));
+                                resumeGameLocal();
+                            }
+                            break;
+
+                        case 'RESUME_GAME':
+                            resumeGameLocal();
+                            break;
+
+                        case 'GAME_OVER':
+                            showGameOverModal(true); // Opponent sent game over, meaning I win
+                            break;
+
+                        case 'DISCONNECT':
+                            if (gameState !== 'GAMEOVER') {
+                                alert("상대방의 연결이 끊어졌습니다.");
+                                window.location.reload();
+                            }
+                            break;
+                    }
+                };
+
+                socket.onerror = (err) => {
+                    console.error("WS Error:", err);
+                    status.innerText = "서버 연결 오류 발생!";
+                    btn.disabled = false;
+                };
+
+            } catch (e) {
+                console.error(e);
+                status.innerText = "오류 발생!";
+                btn.disabled = false;
+            }
+        });
+
+        function syncStateToWS() {
+            if (!socket || socket.readyState !== WebSocket.OPEN) return;
+            const stateUpdate = {
+                boardStr: JSON.stringify(localPlayer.board.flat()),
+                score: localPlayer.score,
+                garbageQueue: localPlayer.garbageQueue,
+                augments: localPlayer.activeAugments
+            };
+            socket.send(JSON.stringify({ type: 'STATE_UPDATE', state: stateUpdate }));
+        }
+
+        function triggerAugmentPhaseWS() {
+            const shuffled = [...AUGMENTS].sort(() => 0.5 - Math.random());
+            const choices = shuffled.slice(0, 6).map(a => a.id);
+            socket.send(JSON.stringify({ type: 'AUGMENT_PHASE', choices: choices }));
+            // 호스트 측 로컬 적용
+            gameState = 'AUGMENT';
+            isLocalReady = false;
+            isOpponentReady = false;
+            openAugmentModal(choices);
+        }
+
+        function submitAugmentChoice(augId) {
+            localPlayer.applyAugment(augId);
+            syncStateToWS();
+            isLocalReady = true;
+
+            socket.send(JSON.stringify({ type: 'AUGMENT_CHOICE', augId: augId }));
+            
+            document.getElementById('aug-status-local').innerText = "선택 완료. 상대방을 기다립니다...";
+            document.getElementById('aug-status-local').className = "mt-4 text-center h-8 flex items-center justify-center text-sm font-bold text-cyan-400 bg-slate-900/50 rounded-lg animate-pulse";
+
+            if (isHost && isLocalReady && isOpponentReady) {
+                socket.send(JSON.stringify({ type: 'RESUME_GAME' }));
+                resumeGameLocal();
+            }
+        }
+
+        function resumeGameLocal() {
+            closeAugmentModal();
+            linesUntilAugment = LINES_PER_AUGMENT;
+            updateCountdownUI();
+            gameState = 'PLAYING';
+            lastTime = performance.now();
+        }
+
+        function triggerGameOverLocal() {
+            gameState = 'GAMEOVER';
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'GAME_OVER' }));
+            }
+            showGameOverModal(false);
+        }
+
+        function showGameOverModal(isWinner) {
+            gameState = 'GAMEOVER';
+            const modal = document.getElementById('game-over-modal');
+            const text = document.getElementById('winner-text');
+            const desc = document.getElementById('game-over-desc');
+            
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            
+            if (isWinner) {
+                text.innerText = "승리!";
+                text.className = "text-7xl font-black mb-6 text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500 drop-shadow-[0_0_20px_rgba(56,189,248,0.5)]";
+                desc.innerText = "상대방의 넥서스가 파괴되었습니다.";
+            } else {
+                text.innerText = "패배...";
+                text.className = "text-7xl font-black mb-6 text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-pink-600 drop-shadow-[0_0_20px_rgba(239,68,68,0.5)]";
+                desc.innerText = "아쉽게도 방어에 실패했습니다.";
+            }
+        }
+
+        function updateCountdownUI() {
+            document.getElementById('augment-countdown').innerText = Math.max(0, linesUntilAugment);
+        }
+
+        // ==========================================
+        // 6. UI MODALS & CONTROLS
+        // ==========================================
+        function startGameUI() {
+            document.getElementById('lobby-ui').classList.add('hidden');
+            document.getElementById('game-ui').classList.remove('hidden');
+            document.getElementById('game-ui').classList.add('flex');
+            document.getElementById('remote-player-container').classList.remove('opacity-80');
+            document.getElementById('remote-status-text').innerText = "상대방 온라인";
+            
+            localPlayer = new PlayerEngine('board-local', true);
+            remotePlayer = new PlayerEngine('board-remote', false);
+            
+            localPlayer.draw();
+            remotePlayer.draw();
+
+            gameState = 'PLAYING';
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function openAugmentModal(choices) {
+            const modal = document.getElementById('augment-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            
+            const localContainer = document.getElementById('aug-choices-local');
+            const remoteContainer = document.getElementById('aug-choices-remote');
+            localContainer.innerHTML = '';
+            remoteContainer.innerHTML = '';
+            
+            document.getElementById('remote-waiting-overlay').classList.remove('hidden');
+            document.getElementById('aug-status-local').innerText = "아이템을 선택하세요";
+            document.getElementById('aug-status-local').className = "mt-4 text-center h-8 flex items-center justify-center text-sm font-bold text-cyan-300 bg-slate-900/50 rounded-lg";
+            document.getElementById('aug-status-remote').innerText = "대기 중...";
+            document.getElementById('aug-status-remote').className = "mt-4 text-center h-8 flex items-center justify-center text-sm font-bold text-pink-300 bg-slate-900/50 rounded-lg";
+
+            const myChoices = isHost ? choices.slice(0,3) : choices.slice(3,6);
+            const opponentChoices = isHost ? choices.slice(3,6) : choices.slice(0,3);
+
+            myChoices.forEach(id => {
+                const el = createAugmentCard(getAugmentById(id), true, localContainer);
+                localContainer.appendChild(el);
+            });
+
+            opponentChoices.forEach(id => {
+                const el = createAugmentCard(getAugmentById(id), false, remoteContainer);
+                remoteContainer.appendChild(el);
+            });
+        }
+
+        function createAugmentCard(aug, isLocal, container) {
+            const el = document.createElement('div');
+            el.className = `augment-card p-4 rounded-xl border-2 border-slate-700 bg-slate-800/80 flex items-center gap-4`;
+            el.innerHTML = `
+                <div class="text-4xl w-12 h-12 flex items-center justify-center">${aug.icon}</div>
+                <div class="flex-1 text-left">
+                    <div class="font-black text-white text-lg flex items-center gap-2">
+                        ${aug.name}
+                        <span class="text-[10px] px-2 py-0.5 rounded-full border ${aug.tier === 'tier-legendary' ? 'border-amber-500 text-amber-500' : (aug.tier === 'tier-epic' ? 'border-purple-500 text-purple-400' : 'border-slate-500 text-slate-400')} uppercase tracking-wider bg-black/50">${aug.type.split('_')[0]}</span>
+                    </div>
+                    <div class="text-xs text-slate-300 leading-relaxed mt-1 font-medium">${aug.desc}</div>
+                </div>
+            `;
+            if (isLocal) {
+                el.onclick = () => {
+                    Array.from(container.children).forEach(c => c.classList.remove('selected'));
+                    el.classList.add('selected');
+                    Array.from(container.children).forEach(c => c.style.pointerEvents = 'none');
+                    submitAugmentChoice(aug.id);
+                };
+            }
+            return el;
+        }
+
+        function closeAugmentModal() {
+            const modal = document.getElementById('augment-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (gameState !== 'PLAYING') return;
+            if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
+            
+            keys[e.code] = true;
+            if (e.code === 'ArrowUp') localPlayer.playerRotate(1);
+            if (e.code === 'Space') localPlayer.hardDrop();
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+        });
+
+        function gameLoop(time) {
+            if (gameState !== 'PLAYING') return;
+            const deltaTime = time - lastTime;
+            lastTime = time;
+
+            localPlayer.update(deltaTime);
+            
+            localPlayer.draw();
+            if(remotePlayer) remotePlayer.draw();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Draw decorative idle boards
+        const idleCanvasLocal = document.getElementById('board-local');
+        const idleCtxLocal = idleCanvasLocal.getContext('2d');
+        idleCtxLocal.fillStyle = '#020617';
+        idleCtxLocal.fillRect(0, 0, 300, 600);
+        idleCtxLocal.fillStyle = '#1e293b';
+        idleCtxLocal.font = "14px Pretendard";
+        idleCtxLocal.textAlign = "center";
+        idleCtxLocal.fillText("WAITING FOR MATCH", 150, 300);
+
+        const idleCanvasRemote = document.getElementById('board-remote');
+        const idleCtxRemote = idleCanvasRemote.getContext('2d');
+        idleCtxRemote.fillStyle = '#020617';
+        idleCtxRemote.fillRect(0, 0, 300, 600);
+
+    </script>
+</body>
+</html>
