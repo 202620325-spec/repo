@@ -195,7 +195,9 @@
         // 1. WEBSOCKET SETUP (CLOUDFLARE BACKEND)
         // ==========================================
         // 중요: Cloudflare Worker 배포 후 생성된 주소로 교체하세요! (예: wss://my-worker.my-account.workers.dev)
-        const WS_URL = "wss://repo.202620325.workers.dev";
+        const WS_URL =
+            (location.protocol === "https:" ? "wss://" : "ws://")
+            + location.host;
         
         let socket = null;
         let isHost = false;
