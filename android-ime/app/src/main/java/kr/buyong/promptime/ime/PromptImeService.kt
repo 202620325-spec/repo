@@ -185,7 +185,7 @@ class PromptImeService : InputMethodService() {
         addKeyRow(listOf(
             KeySpec("ABC", 1.3f) { symbols = false; rebuildKeyboard() },
             KeySpec("*", 1f) { commitLiteral("*", Trigger.PUNCTUATION) },
-            KeySpec("\\\"", 1f) { commitLiteral("\\\"", Trigger.PUNCTUATION) },
+            KeySpec("\"", 1f) { commitLiteral("\"", Trigger.PUNCTUATION) },
             KeySpec("'", 1f) { commitLiteral("'", Trigger.PUNCTUATION) },
             KeySpec(":", 1f) { commitLiteral(":", Trigger.PUNCTUATION) },
             KeySpec(";", 1f) { commitLiteral(";", Trigger.PUNCTUATION) },
@@ -279,8 +279,8 @@ class PromptImeService : InputMethodService() {
             currentInputConnection?.performEditorAction(action)
             if (promptActive && composed.isNotEmpty()) coordinator.observeTyped(captureSnapshot(), composed, Trigger.PUNCTUATION)
         } else {
-            currentInputConnection?.commitText("\\n", 1)
-            if (promptActive) coordinator.observeTyped(captureSnapshot(), composed + "\\n", Trigger.PUNCTUATION)
+            currentInputConnection?.commitText("\n", 1)
+            if (promptActive) coordinator.observeTyped(captureSnapshot(), composed + "\n", Trigger.PUNCTUATION)
         }
     }
 
