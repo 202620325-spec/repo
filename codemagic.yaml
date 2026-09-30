@@ -1,0 +1,23 @@
+workflows:
+  prompt-ime-android:
+    name: Prompt IME Android
+    max_build_duration: 60
+    instance_type: linux_x2
+    environment:
+      java: 17
+    scripts:
+      - name: Verify toolchain
+        script: |
+          java -version
+          gradle --version
+      - name: Unit tests
+        script: |
+          cd android-ime
+          gradle testDebugUnitTest --stacktrace
+      - name: Build debug APK
+        script: |
+          cd android-ime
+          gradle assembleDebug --stacktrace
+    artifacts:
+      - android-ime/app/build/outputs/apk/debug/*.apk
+      - android-ime/app/build/reports/tests/testDebugUnitTest/**
