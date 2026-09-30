@@ -1,0 +1,35 @@
+name: Prompt IME Android CI
+
+on:
+  push:
+    branches: [ "feature/solar-ime" ]
+  pull_request:
+    paths:
+      - "android-ime/**"
+      - ".github/workflows/android-ime.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install Android 35
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Install Gradle 8.9
+        run: |
+          curl -LsS https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
+          unzip -q /tmp/gradle.zip -d /tmp
+      - name: Unit tests
+        run: /tmp/gradle-8.9/bin/gradle -p android-ime testDebugUnitTest --stacktrace
+      - name: Build APK
+        run: /tmp/gradle-8.9/bin/gradle -p android-ime assembleDebug --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prompt-ime-debug
+          path: android-ime/app/build/outputs/apk/debug/*.apk

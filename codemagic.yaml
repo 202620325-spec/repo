@@ -1,0 +1,28 @@
+workflows:
+  prompt-ime-android:
+    name: Prompt IME Android
+    max_build_duration: 60
+    instance_type: linux_x2
+    environment:
+      java: 17
+    scripts:
+      - name: Prepare Android and Gradle
+        script: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > android-ime/local.properties
+          curl -LsS https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
+          unzip -q -o /tmp/gradle.zip -d /tmp
+          /tmp/gradle-8.9/bin/gradle --version
+      - name: Unit tests
+        script: |
+          set -euo pipefail
+          /tmp/gradle-8.9/bin/gradle -p android-ime testDebugUnitTest --stacktrace
+      - name: Build debug APK
+        script: |
+          set -euo pipefail
+          /tmp/gradle-8.9/bin/gradle -p android-ime assembleDebug --stacktrace
+    artifacts:
+      - android-ime/app/build/outputs/apk/debug/*.apk
+      - android-ime/app/build/reports/tests/testDebugUnitTest/**
