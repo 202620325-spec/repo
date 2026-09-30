@@ -215,7 +215,7 @@ class PromptImeService : InputMethodService() {
     }
 
     private fun onLetter(latin: Char) {
-        if (!promptActive && latin == 'p') {
+        if (!promptActive && latin == 'p' && !isSensitiveEditor()) {
             val before = currentInputConnection?.getTextBeforeCursor(256, 0)?.toString().orEmpty()
             if (PromptActivation.shouldActivate(before, 'p', isUriLikeEditor())) {
                 markInternalEdit()
